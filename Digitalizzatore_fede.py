@@ -600,8 +600,6 @@ class CPTUApp(tk.Tk):
                     # 3. ESTRAZIONE ENDPOINT (Niente maniglie di bezier che sballano)
                     if item[0] == "l":
                         pts_raw = [item[1], item[2]]
-                    elif item[0] == "c":
-                        pts_raw = [item[1], item[4]] # Solo inizio e fine curva
                         
                     if not pts_raw: continue
 
@@ -612,6 +610,7 @@ class CPTUApp(tk.Tk):
                     # Se una linea attraversa il grafico per quasi tutta la sua lunghezza/altezza, la scartiamo.
                     dx = abs(p1.x - p2.x)
                     dy = abs(p1.y - p2.y)
+                    if dy < 1.0: continue # Regola 1: Veto Orizzontale (ignora i ritorni allo zero)
                     if dy >= box_height * 0.95: continue # Cornice verticale
                     if dx >= box_width * 0.95: continue  # Cornice o griglia orizzontale
                     
@@ -631,7 +630,7 @@ class CPTUApp(tk.Tk):
                 # Arrotondo a 1cm per aggregare i punti sdoppiati in un profilo pulito
                 df_pts = pd.DataFrame(points, columns=['depth', 'val'])
                 df_pts['depth_round'] = df_pts['depth'].round(3)
-                df_pts = df_pts.groupby('depth_round')['val'].mean().reset_index().sort_values('depth_round')
+                df_pts = df_pts.groupby('depth_round')['val'].max().reset_index().sort_values('depth_round')
                 
                 f_interp = interp1d(df_pts['depth_round'], df_pts['val'], bounds_error=False, fill_value=np.nan)
                 col_name = f'{cal["param"]} ({cal["target_unit"]})'

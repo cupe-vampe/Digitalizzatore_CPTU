@@ -76,12 +76,12 @@ class CalibrationDialog(tk.Toplevel):
         ttk.Combobox(self, textvariable=self.target_unit_var, values=["MPa", "kPa"]).grid(row=row, column=1, padx=10, pady=5)
         
         row += 1
-        tk.Label(self, text="Valore Minimo (Asse X Sorgente):").grid(row=row, column=0, padx=10, pady=5, sticky="e")
+        tk.Label(self, text="Valore Minimo (Asse X):").grid(row=row, column=0, padx=10, pady=5, sticky="e")
         self.xmin_var = tk.StringVar(value=str(existing_data.get('x_range', (0.0, 40.0))[0]) if existing_data else "0.0")
         tk.Entry(self, textvariable=self.xmin_var).grid(row=row, column=1, padx=10, pady=5)
         
         row += 1
-        tk.Label(self, text="Valore Massimo (Asse X Sorgente):").grid(row=row, column=0, padx=10, pady=5, sticky="e")
+        tk.Label(self, text="Valore Massimo (Asse X):").grid(row=row, column=0, padx=10, pady=5, sticky="e")
         self.xmax_var = tk.StringVar(value=str(existing_data.get('x_range', (0.0, 40.0))[1]) if existing_data else "40.0")
         tk.Entry(self, textvariable=self.xmax_var).grid(row=row, column=1, padx=10, pady=5)
         
@@ -128,7 +128,7 @@ class CalibrationDialog(tk.Toplevel):
         self.destroy()
 
 class PreviewWindow(tk.Toplevel):
-    def __init__(self, parent, df):
+    def __init__(self, parent, df, min_depth, max_depth):
         super().__init__(parent)
         self.title("Controllo Grafico Dati Estratti")
         self.geometry("1100x800")
@@ -144,20 +144,26 @@ class PreviewWindow(tk.Toplevel):
                   command=self.save_excel).pack(side=tk.RIGHT, padx=20)
         
         fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(10, 6), sharey=True)
-        ax1.invert_yaxis()
+        ax1.set_ylim(max_depth, min_depth) 
         
         col_qc = next((c for c in df.columns if 'qc' in c.lower()), None)
         col_fs = next((c for c in df.columns if 'fs' in c.lower()), None)
         col_u  = next((c for c in df.columns if 'u' in c.lower()), None)
         
         if col_qc:
-            ax1.plot(df[col_qc], df['Profondità (m)'], 'b-', linewidth=1.2)
+            df_plot = df.dropna(subset=[col_qc])
+            if not df_plot.empty:
+                ax1.plot(df_plot[col_qc], df_plot['Profondità (m)'], 'b-', linewidth=1.2)
             ax1.set_title(col_qc); ax1.grid(True)
         if col_fs:
-            ax2.plot(df[col_fs], df['Profondità (m)'], 'r-', linewidth=1.2)
+            df_plot = df.dropna(subset=[col_fs])
+            if not df_plot.empty:
+                ax2.plot(df_plot[col_fs], df_plot['Profondità (m)'], 'r-', linewidth=1.2)
             ax2.set_title(col_fs); ax2.grid(True)
         if col_u:
-            ax3.plot(df[col_u], df['Profondità (m)'], 'g-', linewidth=1.2)
+            df_plot = df.dropna(subset=[col_u])
+            if not df_plot.empty:
+                ax3.plot(df_plot[col_u], df_plot['Profondità (m)'], 'g-', linewidth=1.2)
             ax3.set_title(col_u)
             ax3.axvline(0, color='black', lw=1)
             ax3.grid(True)
@@ -180,7 +186,7 @@ class PreviewWindow(tk.Toplevel):
         save_path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel files", "*.xlsx")])
         if save_path:
             self.df.to_excel(save_path, index=False)
-            messagebox.showinfo("Successo", f"Esportazione Excel completata in:\n{save_path}")
+            messagebox.showinfo("Successo", f"Esportazione completata in:\n{save_path}")
             self.destroy()
 
 class CPTUApp(tk.Tk):
@@ -392,7 +398,6 @@ class CPTUApp(tk.Tk):
         self.canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_img, tags="pdf_img")
         
         self.canvas.config(scrollregion=self.canvas.bbox(tk.ALL))
-        self.generate_snap_points()
         self.redraw_boxes()
         self.draw_grid()
 
@@ -421,29 +426,12 @@ class CPTUApp(tk.Tk):
             if item_id == self.selected_box: self.select_box(new_rect)
             del self.calibrations[item_id]
 
-    def generate_snap_points(self):
-        self.snap_points = []
-        for d in self.pdf_page.get_drawings():
-            for item in d["items"]:
-                if item[0] in ("l", "c"): 
-                    p1 = item[1] * self.matrix
-                    self.snap_points.append((p1.x, p1.y))
-                    if item[0] == "l":
-                        p2 = item[2] * self.matrix
-                        self.snap_points.append((p2.x, p2.y))
-
     def snap_coordinate(self, x, y):
-        best_dist = 10.0
-        snapped_x, snapped_y = x, y
-        for sx, sy in self.snap_points:
-            dist = ((sx - x)**2 + (sy - y)**2)**0.5
-            if dist < best_dist:
-                best_dist = dist
-                snapped_x, snapped_y = sx, sy
-        if self.grid_visible and best_dist == 10.0:
+        if self.grid_visible:
             gx, gy = round(x / 50) * 50, round(y / 50) * 50
-            if ((gx - x)**2 + (gy - y)**2)**0.5 < 15.0: snapped_x, snapped_y = gx, gy
-        return snapped_x, snapped_y
+            if ((gx - x)**2 + (gy - y)**2)**0.5 < 15.0: 
+                return gx, gy
+        return x, y
 
     def select_box(self, box_id):
         if self.selected_box: self.canvas.itemconfig(self.selected_box, outline="red", width=2)
@@ -546,100 +534,97 @@ class CPTUApp(tk.Tk):
             self.calibrations[self.selected_box] = dialog.result
             self.canvas.itemconfig(data["label_id"], text=dialog.result["param"], fill="blue")
 
-    # --- MOTORE DI ESTRAZIONE ASSOLUTO (V3) ---
+    # --- IL MOTORE OTTICO RASTER (CORRETTO MATEMATICAMENTE) ---
     def process_and_export(self):
         calibrated_boxes = [cal for cal in self.calibrations.values() if cal.get("calibrated", False)]
         if not self.pdf_page or not calibrated_boxes:
             return messagebox.showwarning("Attenzione", "Devi calibrare almeno un rettangolo prima di esportare.")
             
-        drawings = self.pdf_page.get_drawings()
-        target_depths = np.arange(0, 40.01, 0.01)
+        y_maxs = [cal["y_range"][1] for cal in calibrated_boxes]
+        max_depth = max(y_maxs) if y_maxs else 40.0
+        target_depths = np.arange(0.0, max_depth + 0.01, 0.01)
         df_final = pd.DataFrame({"Profondità (m)": target_depths})
         
+        # Scatto fotografico ad altissima risoluzione (300 DPI) forzando RGB pulito
+        zoom = 300 / 72.0 
+        mat = fitz.Matrix(zoom, zoom).prerotate(self.rotation_angle)
+        pix = self.pdf_page.get_pixmap(matrix=mat, colorspace=fitz.csRGB, alpha=False)
+        img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
+        
         for cal in calibrated_boxes:
-            pts = [fitz.Point(x, y) * self.matrix for x, y in [
-                (cal["pdf_rect"].x0, cal["pdf_rect"].y0), (cal["pdf_rect"].x1, cal["pdf_rect"].y0),
-                (cal["pdf_rect"].x0, cal["pdf_rect"].y1), (cal["pdf_rect"].x1, cal["pdf_rect"].y1)
-            ]]
-            xs, ys = [p.x for p in pts], [p.y for p in pts]
-            cx0, cx1, cy0, cy1 = min(xs), max(xs), min(ys), max(ys)
+            rect = cal["pdf_rect"]
             
-            box_width = cx1 - cx0
-            box_height = cy1 - cy0
+            # IL FIX CRUCIALE: Mappare le coordinate tenendo conto di pix.x e pix.y (origine della pixmap)
+            pts = [fitz.Point(x, y) * mat for x, y in [
+                (rect.x0, rect.y0), (rect.x1, rect.y0),
+                (rect.x0, rect.y1), (rect.x1, rect.y1)
+            ]]
+            
+            # Sottraiamo pix.x e pix.y per allinearci alla matrice numpy (img_array)
+            pxs = [p.x - pix.x for p in pts]
+            pys = [p.y - pix.y for p in pts]
+            
+            x0 = max(0, int(min(pxs)))
+            y0 = max(0, int(min(pys)))
+            x1 = min(pix.width, int(max(pxs)))
+            y1 = min(pix.height, int(max(pys)))
+            
+            if x1 <= x0 or y1 <= y0:
+                continue # Box invalido o fuori pagina
+                
+            roi = img_array[y0:y1, x0:x1]
+            
+            color_filter = cal.get("color_filter", "Blu")
+            r = roi[:, :, 0].astype(int)
+            g = roi[:, :, 1].astype(int)
+            b = roi[:, :, 2].astype(int)
+            
+            # FILTRO COLORE (Tolleranza ammorbidita per catturare anche l'anti-aliasing)
+            if color_filter == "Rosso":
+                mask = (r > g + 15) & (r > b + 15)
+            elif color_filter == "Blu":
+                mask = (b > r + 15) & (b > g + 15)
+            elif color_filter == "Verde":
+                mask = (g > r + 15) & (g > b + 15)
+            elif color_filter == "Nero/Grigio":
+                mask = (np.abs(r - g) < 25) & (np.abs(g - b) < 25) & (r < 120)
+            else: 
+                mask = (r < 200) & (g < 200) & (b < 200)
+                
+            conversion = CONVERSION_FACTORS.get((cal["source_unit"], cal["target_unit"]), 1.0)
+            baseline_x = cal["x_range"][0] 
             
             points = []
-            conversion = CONVERSION_FACTORS.get((cal["source_unit"], cal["target_unit"]), 1.0)
-            chosen_color = cal.get("color_filter", "Tutti")
             
-            for d in drawings:
-                # 1. IGNORA I RETTANGOLI: le cornici e gli sfondi sono quasi sempre operazioni "re" (rectangle)
-                # questo ripulisce istantaneamente il 90% del rumore di fondo.
+            for row_idx in range(roi.shape[0]):
+                col_indices = np.where(mask[row_idx, :])[0]
                 
-                # 2. COLORE INFALLIBILE
-                line_color = "Altro"
-                c = d.get("color")
-                if c is None or len(c) < 3:
-                    line_color = "Nero/Grigio"
-                else:
-                    r, g, b = c[0], c[1], c[2]
-                    # Se i valori RGB sono vicinissimi tra loro, è una sfumatura di grigio/nero
-                    if max(r,g,b) - min(r,g,b) < 0.15:
-                        line_color = "Nero/Grigio"
-                    else:
-                        if r > g + 0.2 and r > b + 0.2: line_color = "Rosso"
-                        elif b > r + 0.2 and b > g + 0.2: line_color = "Blu"
-                        elif g > r + 0.2 and g > b + 0.2: line_color = "Verde"
-                
-                if chosen_color != "Tutti" and line_color != chosen_color:
-                    continue
-
-                for item in d["items"]:
-                    if item[0] == "re": continue # Ignora sempre i rettangoli
+                # Assicuriamoci che non sia una riga orizzontale che copre tutto il grafico
+                if len(col_indices) > 0 and len(col_indices) < roi.shape[1] * 0.8:
                     
-                    pts_raw = []
-                    # 3. ESTRAZIONE ENDPOINT (Niente maniglie di bezier che sballano)
-                    if item[0] == "l":
-                        pts_raw = [item[1], item[2]]
-                        
-                    if not pts_raw: continue
-
-                    p1 = pts_raw[0] * self.matrix
-                    p2 = pts_raw[1] * self.matrix
-
-                    # 4. FILTRO ANTI-CORNICE (Senza uccidere i valori sullo zero!)
-                    # Se una linea attraversa il grafico per quasi tutta la sua lunghezza/altezza, la scartiamo.
-                    dx = abs(p1.x - p2.x)
-                    dy = abs(p1.y - p2.y)
-                    if dy < 1.0: continue # Regola 1: Veto Orizzontale (ignora i ritorni allo zero)
-                    if dy >= box_height * 0.95: continue # Cornice verticale
-                    if dx >= box_width * 0.95: continue  # Cornice o griglia orizzontale
+                    mapped_xs = np.interp(col_indices, [0, roi.shape[1]-1], cal["x_range"])
                     
-                    # 5. ESTRAZIONE PRECISA DEI PUNTI (Nessun bleed, tolleranza fissa a soli 2 pixel)
-                    margin = 2
-                    for p in (p1, p2):
-                        if (cx0 - margin) <= p.x <= (cx1 + margin) and (cy0 - margin) <= p.y <= (cy1 + margin):
-                            # Mappa i pixel in valori matematici reali
-                            px_cl = max(cx0, min(cx1, p.x))
-                            py_cl = max(cy0, min(cy1, p.y))
-                            
-                            val_x = np.interp(px_cl, [cx0, cx1], cal["x_range"]) * conversion
-                            val_y = np.interp(py_cl, [cy0, cy1], cal["y_range"])
-                            points.append((val_y, val_x))
+                    # LOGICA INVILUPPO: Prendiamo il pixel acceso più lontano dallo zero
+                    dist = np.abs(mapped_xs - baseline_x)
+                    best_idx = np.argmax(dist)
+                    best_x = mapped_xs[best_idx] * conversion
+                    
+                    real_y = np.interp(row_idx, [0, roi.shape[0]-1], cal["y_range"])
+                    points.append((real_y, best_x))
             
             if points:
-                # Arrotondo a 1cm per aggregare i punti sdoppiati in un profilo pulito
                 df_pts = pd.DataFrame(points, columns=['depth', 'val'])
                 df_pts['depth_round'] = df_pts['depth'].round(3)
-                df_pts = df_pts.groupby('depth_round')['val'].max().reset_index().sort_values('depth_round')
+                df_pts = df_pts.groupby('depth_round')['val'].mean().reset_index()
                 
                 f_interp = interp1d(df_pts['depth_round'], df_pts['val'], bounds_error=False, fill_value=np.nan)
                 col_name = f'{cal["param"]} ({cal["target_unit"]})'
                 df_final[col_name] = f_interp(target_depths)
         
-        if len(df_final.columns) == 1:
-            messagebox.showerror("Errore", "Nessun dato estratto. Assicurati che i colori corrispondano e che le maschere coprano le curve.")
+        if len(df_final.columns) == 1 or df_final.iloc[:, 1:].isna().all().all():
+            messagebox.showerror("Errore", "Nessun dato estratto. Controlla la selezione del colore.")
         else:
-            PreviewWindow(self, df_final)
+            PreviewWindow(self, df_final, min_depth=0.0, max_depth=max_depth)
 
 if __name__ == "__main__":
     app = CPTUApp()

@@ -4,24 +4,17 @@ import base64
 import fitz
 
 class AlignmentError(Exception):
-    """Custom exception raised when auto-alignment (template matching) fails."""
     pass
 
 def base64_to_cv2(base64_string: str) -> np.ndarray:
-    """
-    Decodifica una stringa base64 in un'immagine (array numpy) per OpenCV.
-    """
     img_data = base64.b64decode(base64_string)
     np_arr = np.frombuffer(img_data, np.uint8)
     img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
     return img
 
 def calculate_alignment_shift(pdf_path: str, template_dict: dict, dpi: int = 300) -> tuple:
-    """
-    Calcola lo shift (x, y) in pixel tra il marker salvato nel template e
-    la sua posizione nel nuovo PDF.
-    """
     marker_data = template_dict.get("alignment_marker")
+    base_rotation = template_dict.get("base_rotation", 0)
 
     if not marker_data or not marker_data.get("image_base64"):
         return 0, 0
@@ -43,7 +36,7 @@ def calculate_alignment_shift(pdf_path: str, template_dict: dict, dpi: int = 300
         doc = fitz.open(pdf_path)
         page = doc[0]
         zoom = dpi / 72.0
-        mat = fitz.Matrix(zoom, zoom)
+        mat = fitz.Matrix(zoom, zoom).prerotate(base_rotation)
         pix = page.get_pixmap(matrix=mat, colorspace=fitz.csRGB, alpha=False)
 
         target_img_rgb = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)

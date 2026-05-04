@@ -4,24 +4,16 @@ import cv2
 import numpy as np
 
 class TemplateValidationError(Exception):
-    """Custom exception per errori di validazione del formato del template JSON."""
     pass
 
 class TemplateManager:
-    """
-    Gestisce il salvataggio, caricamento e validazione dei template JSON.
-    """
-
     MAX_MARKER_PIXELS = 640000
-    SCHEMA_VERSION = "1.0"
+    SCHEMA_VERSION = "1.1" # Incremented for base_rotation
 
     @classmethod
     def _validate_schema(cls, template_dict: dict):
         if not isinstance(template_dict, dict):
             raise TemplateValidationError("Il template deve essere un dizionario.")
-
-        if template_dict.get("version") != cls.SCHEMA_VERSION:
-            raise TemplateValidationError(f"Versione template non supportata: {template_dict.get('version')}")
 
         boxes = template_dict.get("boxes")
         if not isinstance(boxes, list) or len(boxes) == 0:
@@ -51,12 +43,6 @@ class TemplateManager:
                 raise TemplateValidationError("'alignment_marker' deve essere un dizionario.")
             if "image_base64" not in marker or "rect_norm" not in marker:
                 raise TemplateValidationError("'alignment_marker' deve contenere 'image_base64' e 'rect_norm'.")
-
-            rect = marker["rect_norm"]
-            if not isinstance(rect, (list, tuple)) or len(rect) != 4:
-                raise TemplateValidationError("'rect_norm' nel marker deve essere una lista di 4 elementi [x0, y0, x1, y1].")
-            if not all(isinstance(coord, (int, float)) and 0.0 <= coord <= 1.0 for coord in rect):
-                raise TemplateValidationError("Le coordinate 'rect_norm' nel marker devono essere float compresi tra 0 e 1.")
 
     @classmethod
     def load_template(cls, file_path: str) -> dict:
@@ -93,10 +79,12 @@ class TemplateManager:
                               template_name: str = "Custom Template",
                               marker_image: np.ndarray = None,
                               marker_rect_norm: list = None,
-                              min_confidence: float = 0.85):
+                              min_confidence: float = 0.85,
+                              base_rotation: int = 0):
         template_dict = {
             "version": cls.SCHEMA_VERSION,
             "name": template_name,
+            "base_rotation": base_rotation,
             "boxes": boxes_data
         }
 

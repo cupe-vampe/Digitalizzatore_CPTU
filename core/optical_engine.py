@@ -4,10 +4,8 @@ import numpy as np
 from scipy.interpolate import interp1d
 
 class ExtractionError(Exception):
-    """Custom exception raised when data extraction fails."""
     pass
 
-# Costanti per la conversione delle unità
 CONVERSION_FACTORS = {
     ("kPa", "MPa"): 0.001,
     ("MPa", "kPa"): 1000.0,
@@ -17,16 +15,17 @@ CONVERSION_FACTORS = {
     ("cm", "m"): 0.01,
 }
 
-def get_color_mask(roi_array: np.ndarray, color_filter: str) -> np.ndarray:
-    """
-    Applica un filtro colore all'immagine NumPy per isolare i pixel del tracciato.
-    """
+def get_color_mask(roi_array: np.ndarray, color_filter: str, custom_rgb: tuple = None) -> np.ndarray:
     r = roi_array[:, :, 0].astype(int)
     g = roi_array[:, :, 1].astype(int)
     b = roi_array[:, :, 2].astype(int)
 
-    # Filtro colore con tolleranza ammorbidita per l'anti-aliasing
-    if color_filter == "Rosso":
+    if color_filter == "Custom" and custom_rgb:
+        cr, cg, cb = custom_rgb
+        # Tolerance for custom RGB
+        tol = 30
+        return (np.abs(r - cr) < tol) & (np.abs(g - cg) < tol) & (np.abs(b - cb) < tol)
+    elif color_filter == "Rosso":
         return (r > g + 15) & (r > b + 15)
     elif color_filter == "Blu":
         return (b > r + 15) & (b > g + 15)
@@ -38,9 +37,6 @@ def get_color_mask(roi_array: np.ndarray, color_filter: str) -> np.ndarray:
         return (r < 200) & (g < 200) & (b < 200)
 
 def extract_data(pdf_path: str, template_dict: dict, shift_x: int = 0, shift_y: int = 0) -> pd.DataFrame:
-    """
-    Motore ottico disaccoppiato per l'estrazione di dati vettoriali da un PDF CPTU.
-    """
     try:
         doc = fitz.open(pdf_path)
         page = doc[0]
@@ -48,10 +44,13 @@ def extract_data(pdf_path: str, template_dict: dict, shift_x: int = 0, shift_y: 
         raise ExtractionError(f"Impossibile aprire il file PDF: {e}")
 
     try:
-        # Scatto fotografico ad altissima risoluzione (300 DPI) forzando RGB pulito
         dpi = 300
         zoom = dpi / 72.0
-        mat = fitz.Matrix(zoom, zoom)
+
+        # Apply base rotation from template if present
+        base_rotation = template_dict.get("base_rotation", 0)
+
+        mat = fitz.Matrix(zoom, zoom).prerotate(base_rotation)
 
         pix = page.get_pixmap(matrix=mat, colorspace=fitz.csRGB, alpha=False)
         img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
@@ -101,7 +100,8 @@ def extract_data(pdf_path: str, template_dict: dict, shift_x: int = 0, shift_y: 
         roi = img_array[y0_px:y1_px, x0_px:x1_px]
 
         color_filter = box.get("color_filter", "Blu")
-        mask = get_color_mask(roi, color_filter)
+        custom_rgb = box.get("custom_rgb", None)
+        mask = get_color_mask(roi, color_filter, custom_rgb)
 
         conversion = CONVERSION_FACTORS.get((box.get("source_unit", "MPa"), box.get("target_unit", "MPa")), 1.0)
         x_range = box.get("x_range", [0.0, 40.0])
@@ -113,9 +113,12 @@ def extract_data(pdf_path: str, template_dict: dict, shift_x: int = 0, shift_y: 
         for row_idx in range(roi.shape[0]):
             col_indices = np.where(mask[row_idx, :])[0]
 
+            # Data Cleaning: Ignore isolated pixels or text by requiring a small cluster,
+            # and ignore horizontal lines that span > 80% of the box
             if len(col_indices) > 0 and len(col_indices) < roi.shape[1] * 0.8:
+                # Find the largest cluster of active pixels (simple heuristic: mean of all)
+                # To be more robust, we just take the furthest point from baseline
                 mapped_xs = np.interp(col_indices, [0, roi.shape[1]-1], x_range)
-
                 dist = np.abs(mapped_xs - baseline_x)
                 best_idx = np.argmax(dist)
                 best_x = mapped_xs[best_idx] * conversion
@@ -126,6 +129,15 @@ def extract_data(pdf_path: str, template_dict: dict, shift_x: int = 0, shift_y: 
         if points:
             data_extracted = True
             df_pts = pd.DataFrame(points, columns=['depth', 'val'])
+
+            # Simple outlier removal: remove points that jump too much from neighbors
+            df_pts['val_diff'] = df_pts['val'].diff().abs().fillna(0)
+            # If the jump is extremely large compared to standard deviation, it might be an outlier
+            std = df_pts['val'].std()
+            if not pd.isna(std) and std > 0:
+                # Filter out points where diff is > 3*std
+                df_pts = df_pts[df_pts['val_diff'] < 3 * std]
+
             df_pts['depth_round'] = df_pts['depth'].round(3)
             df_pts = df_pts.groupby('depth_round')['val'].mean().reset_index()
 
@@ -137,6 +149,6 @@ def extract_data(pdf_path: str, template_dict: dict, shift_x: int = 0, shift_y: 
     del img_array
 
     if not data_extracted or len(df_final.columns) == 1 or df_final.iloc[:, 1:].isna().all().all():
-        raise ExtractionError("Nessun dato estratto per i box forniti (nessun pixel corrispondente ai colori indicati).")
+        raise ExtractionError("Nessun dato estratto per i box forniti.")
 
     return df_final

@@ -7,28 +7,22 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFileDialog,
     QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsPixmapItem,
     QFormLayout, QLineEdit, QComboBox, QGroupBox, QScrollArea, QMessageBox,
-    QListWidget, QListWidgetItem, QAbstractItemView
+    QListWidget, QListWidgetItem, QAbstractItemView, QColorDialog
 )
 from PyQt6.QtCore import Qt, QRectF, pyqtSignal, QPointF
 from PyQt6.QtGui import QImage, QPixmap, QPen, QColor, QBrush, QPainter
 
-# Import per validazione ed eventuale estrazione della ROI del marker
 from core.template_manager import TemplateManager
 
 class ResizableRectItem(QGraphicsRectItem):
-    """Un rettangolo QGraphicsItem che l'utente può spostare e ridimensionare trascinando i bordi."""
     handleSize = 8.0
     handleSpace = -4.0
 
     handleCursors = {
-        1: Qt.CursorShape.SizeFDiagCursor, # Top-Left
-        2: Qt.CursorShape.SizeVerCursor,   # Top
-        3: Qt.CursorShape.SizeBDiagCursor, # Top-Right
-        4: Qt.CursorShape.SizeHorCursor,   # Right
-        5: Qt.CursorShape.SizeFDiagCursor, # Bottom-Right
-        6: Qt.CursorShape.SizeVerCursor,   # Bottom
-        7: Qt.CursorShape.SizeBDiagCursor, # Bottom-Left
-        8: Qt.CursorShape.SizeHorCursor    # Left
+        1: Qt.CursorShape.SizeFDiagCursor, 2: Qt.CursorShape.SizeVerCursor,
+        3: Qt.CursorShape.SizeBDiagCursor, 4: Qt.CursorShape.SizeHorCursor,
+        5: Qt.CursorShape.SizeFDiagCursor, 6: Qt.CursorShape.SizeVerCursor,
+        7: Qt.CursorShape.SizeBDiagCursor, 8: Qt.CursorShape.SizeHorCursor
     }
 
     def __init__(self, rect: QRectF, box_id: str, is_marker=False, parent=None):
@@ -49,8 +43,7 @@ class ResizableRectItem(QGraphicsRectItem):
 
     def handleAt(self, point: QPointF):
         for k, v, in self.handles.items():
-            if v.contains(point):
-                return k
+            if v.contains(point): return k
         return None
 
     def hoverMoveEvent(self, moveEvent):
@@ -88,22 +81,14 @@ class ResizableRectItem(QGraphicsRectItem):
         rect = self.rect()
         diff = mousePos - self.mousePressPos
 
-        if self.handleSelected == 1: # Top-Left
-            rect.setTopLeft(self.mousePressRect.topLeft() + diff)
-        elif self.handleSelected == 2: # Top
-            rect.setTop(self.mousePressRect.top() + diff.y())
-        elif self.handleSelected == 3: # Top-Right
-            rect.setTopRight(self.mousePressRect.topRight() + diff)
-        elif self.handleSelected == 4: # Right
-            rect.setRight(self.mousePressRect.right() + diff.x())
-        elif self.handleSelected == 5: # Bottom-Right
-            rect.setBottomRight(self.mousePressRect.bottomRight() + diff)
-        elif self.handleSelected == 6: # Bottom
-            rect.setBottom(self.mousePressRect.bottom() + diff.y())
-        elif self.handleSelected == 7: # Bottom-Left
-            rect.setBottomLeft(self.mousePressRect.bottomLeft() + diff)
-        elif self.handleSelected == 8: # Left
-            rect.setLeft(self.mousePressRect.left() + diff.x())
+        if self.handleSelected == 1: rect.setTopLeft(self.mousePressRect.topLeft() + diff)
+        elif self.handleSelected == 2: rect.setTop(self.mousePressRect.top() + diff.y())
+        elif self.handleSelected == 3: rect.setTopRight(self.mousePressRect.topRight() + diff)
+        elif self.handleSelected == 4: rect.setRight(self.mousePressRect.right() + diff.x())
+        elif self.handleSelected == 5: rect.setBottomRight(self.mousePressRect.bottomRight() + diff)
+        elif self.handleSelected == 6: rect.setBottom(self.mousePressRect.bottom() + diff.y())
+        elif self.handleSelected == 7: rect.setBottomLeft(self.mousePressRect.bottomLeft() + diff)
+        elif self.handleSelected == 8: rect.setLeft(self.mousePressRect.left() + diff.x())
 
         self.setRect(rect)
         self.updateHandlesPos()
@@ -125,16 +110,15 @@ class ResizableRectItem(QGraphicsRectItem):
         if self.isSelected():
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setBrush(QBrush(QColor(0, 255, 0, 255)))
-            painter.setPen(QPen(QColor(0, 0, 0, 255), 1.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            painter.setPen(QPen(QColor(0, 0, 0, 255), 1.0, Qt.PenStyle.SolidLine))
             for _, rect in self.handles.items():
                 painter.drawRect(rect)
 
 
 class PDFViewer(QGraphicsView):
-    """QGraphicsView specializzata per visualizzare il PDF e disegnare le ROI."""
-
-    boxAdded = pyqtSignal(str, bool) # id_box, is_marker
+    boxAdded = pyqtSignal(str, bool)
     boxSelected = pyqtSignal(str)
+    colorPicked = pyqtSignal(tuple)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -143,7 +127,6 @@ class PDFViewer(QGraphicsView):
 
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setOptimizationFlag(QGraphicsView.OptimizationFlag.DontAdjustForAntialiasing, True)
         self.setOptimizationFlag(QGraphicsView.OptimizationFlag.DontSavePainterState, True)
         self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
@@ -151,47 +134,45 @@ class PDFViewer(QGraphicsView):
         self.zoom_level = 1.0
         self.current_pdf_path = None
         self.pdf_pixmap_item = None
-        self.drawing_mode = None # 'box' o 'marker' o None
+        self.drawing_mode = None # 'box', 'marker', 'eyedropper', 'pan', 'select'
         self.temp_rect = None
         self.start_pos = None
 
-        self.boxes = {} # id -> ResizableRectItem
+        self.boxes = {}
         self.box_counter = 1
         self.marker_item = None
+        self.base_rotation = 0
+
+        self.show_grid = False
+        self.grid_lines = []
 
     def wheelEvent(self, event):
         if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
             zoomInFactor = 1.25
             zoomOutFactor = 1 / zoomInFactor
-
             oldPos = self.mapToScene(event.position().toPoint())
-
-            if event.angleDelta().y() > 0:
-                zoomFactor = zoomInFactor
-            else:
-                zoomFactor = zoomOutFactor
-
+            zoomFactor = zoomInFactor if event.angleDelta().y() > 0 else zoomOutFactor
             self.scale(zoomFactor, zoomFactor)
             self.zoom_level *= zoomFactor
-
             newPos = self.mapToScene(event.position().toPoint())
             delta = newPos - oldPos
             self.translate(delta.x(), delta.y())
         else:
             super().wheelEvent(event)
 
-    def load_pdf(self, path: str):
+    def load_pdf(self, path: str, rotation: int = 0):
         self.current_pdf_path = path
+        self.base_rotation = rotation
         self.scene.clear()
         self.boxes.clear()
+        self.grid_lines.clear()
         self.marker_item = None
         self.box_counter = 1
 
         try:
             doc = fitz.open(path)
             page = doc[0]
-            # Render visuale a 150 DPI
-            mat = fitz.Matrix(150 / 72.0, 150 / 72.0)
+            mat = fitz.Matrix(150 / 72.0, 150 / 72.0).prerotate(rotation)
             pix = page.get_pixmap(matrix=mat, colorspace=fitz.csRGB, alpha=False)
 
             img = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format.Format_RGB888)
@@ -200,36 +181,85 @@ class PDFViewer(QGraphicsView):
             self.scene.addItem(self.pdf_pixmap_item)
             self.scene.setSceneRect(0, 0, pixmap.width(), pixmap.height())
             doc.close()
+
+            if self.show_grid:
+                self.draw_grid()
+
         except Exception as e:
             QMessageBox.critical(self, "Errore PDF", f"Impossibile aprire il PDF: {e}")
 
+    def draw_grid(self):
+        for line in self.grid_lines:
+            self.scene.removeItem(line)
+        self.grid_lines.clear()
+
+        if not self.show_grid or not self.pdf_pixmap_item:
+            return
+
+        rect = self.scene.sceneRect()
+        w, h = rect.width(), rect.height()
+
+        pen = QPen(QColor(0, 255, 0, 150), 1, Qt.PenStyle.DashLine)
+
+        for x in range(0, int(w), 50):
+            line = self.scene.addLine(x, 0, x, h, pen)
+            self.grid_lines.append(line)
+        for y in range(0, int(h), 50):
+            line = self.scene.addLine(0, y, w, y, pen)
+            self.grid_lines.append(line)
+
+    def toggle_grid(self):
+        self.show_grid = not self.show_grid
+        self.draw_grid()
+
+    def set_mode(self, mode):
+        self.drawing_mode = mode
+        if mode == 'pan':
+            self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        elif mode in ['box', 'marker']:
+            self.setDragMode(QGraphicsView.DragMode.NoDrag)
+            self.setCursor(Qt.CursorShape.CrossCursor)
+        elif mode == 'eyedropper':
+            self.setDragMode(QGraphicsView.DragMode.NoDrag)
+            self.setCursor(Qt.CursorShape.CrossCursor) # Ideally an eyedropper cursor
+        else: # 'select'
+            self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+
     def mousePressEvent(self, event):
-        if self.drawing_mode and event.button() == Qt.MouseButton.LeftButton:
+        if self.drawing_mode == 'eyedropper' and event.button() == Qt.MouseButton.LeftButton:
+            scene_pos = self.mapToScene(event.position().toPoint())
+            if self.pdf_pixmap_item and self.pdf_pixmap_item.boundingRect().contains(scene_pos):
+                img = self.pdf_pixmap_item.pixmap().toImage()
+                color = img.pixelColor(int(scene_pos.x()), int(scene_pos.y()))
+                self.colorPicked.emit((color.red(), color.green(), color.blue()))
+            return
+
+        if self.drawing_mode in ['box', 'marker'] and event.button() == Qt.MouseButton.LeftButton:
             self.start_pos = self.mapToScene(event.position().toPoint())
             self.temp_rect = QGraphicsRectItem(QRectF(self.start_pos, self.start_pos))
             pen_color = QColor("yellow") if self.drawing_mode == 'marker' else QColor("red")
             self.temp_rect.setPen(QPen(pen_color, 2, Qt.PenStyle.DashLine))
             self.scene.addItem(self.temp_rect)
-            return # Consumiamo l'evento
+            return
 
         super().mousePressEvent(event)
 
-        # Gestione selezione
         item = self.scene.itemAt(self.mapToScene(event.position().toPoint()), self.transform())
         if isinstance(item, ResizableRectItem):
             self.boxSelected.emit(item.box_id)
 
     def mouseMoveEvent(self, event):
-        if self.drawing_mode and self.temp_rect and self.start_pos:
+        if self.drawing_mode in ['box', 'marker'] and self.temp_rect and self.start_pos:
             current_pos = self.mapToScene(event.position().toPoint())
             rect = QRectF(self.start_pos, current_pos).normalized()
             self.temp_rect.setRect(rect)
             return
-
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        if self.drawing_mode and self.temp_rect:
+        if self.drawing_mode in ['box', 'marker'] and self.temp_rect:
             current_pos = self.mapToScene(event.position().toPoint())
             rect = QRectF(self.start_pos, current_pos).normalized()
             self.scene.removeItem(self.temp_rect)
@@ -239,7 +269,7 @@ class PDFViewer(QGraphicsView):
             if rect.width() > 10 and rect.height() > 10:
                 is_marker = self.drawing_mode == 'marker'
                 if is_marker and self.marker_item:
-                    self.scene.removeItem(self.marker_item) # Rimuovi il vecchio marker
+                    self.scene.removeItem(self.marker_item)
 
                 box_id = "marker" if is_marker else f"box_{self.box_counter}"
                 new_box = ResizableRectItem(rect, box_id, is_marker)
@@ -256,80 +286,86 @@ class PDFViewer(QGraphicsView):
                 self.scene.clearSelection()
                 new_box.setSelected(True)
 
-            self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
-            self.drawing_mode = None
+            self.set_mode('select')
             return
 
         super().mouseReleaseEvent(event)
 
 
 class TemplateEditorView(QWidget):
-    """View principale per l'Editor dei Template."""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Template Editor")
-        # Dati configurati per ogni box
         self.box_data = {}
+        self.custom_rgb = None
         self.setup_ui()
         self.apply_dark_theme()
 
     def setup_ui(self):
         main_layout = QHBoxLayout(self)
 
-        # -- SINISTRA: Toolbar e PDF Viewer --
-        left_layout = QVBoxLayout()
+        # --- FAR LEFT: Toolbar ---
+        toolbar_layout = QVBoxLayout()
+        toolbar_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        toolbar_layout = QHBoxLayout()
-        self.btn_load = QPushButton("📄 Carica PDF Campione")
-        self.btn_add_box = QPushButton("➕ Disegna Data Box")
-        self.btn_add_marker = QPushButton("🎯 Disegna Marker CV")
+        self.btn_load = QPushButton("📄 Load")
+        self.btn_rotate = QPushButton("↻ Ruota 90°")
+        self.btn_grid = QPushButton("𐄹 Griglia")
 
-        toolbar_layout.addWidget(self.btn_load)
-        toolbar_layout.addWidget(self.btn_add_box)
-        toolbar_layout.addWidget(self.btn_add_marker)
-        toolbar_layout.addStretch()
+        self.btn_select = QPushButton("↖ Select")
+        self.btn_pan = QPushButton("✋ Pan")
+        self.btn_box = QPushButton("🟥 Data Box")
+        self.btn_marker = QPushButton("🟨 Marker CV")
+        self.btn_eyedrop = QPushButton("💉 Contagocce")
 
+        for btn in [self.btn_load, self.btn_rotate, self.btn_grid, self.btn_select, self.btn_pan, self.btn_box, self.btn_marker, self.btn_eyedrop]:
+            btn.setFixedWidth(100)
+            btn.setCheckable(True) if btn not in [self.btn_load, self.btn_rotate] else None
+            toolbar_layout.addWidget(btn)
+
+        # Group checkable tools
+        self.tools = [self.btn_select, self.btn_pan, self.btn_box, self.btn_marker, self.btn_eyedrop]
+
+        left_panel = QWidget()
+        left_panel.setLayout(toolbar_layout)
+        left_panel.setFixedWidth(120)
+
+        # --- MIDDLE: Viewer ---
         self.viewer = PDFViewer()
 
-        left_layout.addLayout(toolbar_layout)
-        left_layout.addWidget(self.viewer)
-
-        # -- DESTRA: Pannello di Configurazione --
+        # --- RIGHT: Properties ---
         right_panel = QWidget()
         right_panel.setFixedWidth(350)
         right_layout = QVBoxLayout(right_panel)
 
         self.list_widget = QListWidget()
-        self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
 
         self.config_group = QGroupBox("Proprietà Box Selezionato")
         form_layout = QFormLayout()
 
-        self.f_param = QComboBox()
-        self.f_param.addItems(["qc", "fs", "u"])
+        self.f_param = QLineEdit("qc")
 
         self.f_color = QComboBox()
-        self.f_color.addItems(["Blu", "Rosso", "Verde", "Nero/Grigio", "Tutti"])
+        self.f_color.addItems(["Blu", "Rosso", "Verde", "Nero/Grigio", "Tutti", "Custom"])
+        self.lbl_rgb = QLabel("RGB: N/A")
 
         self.f_x_min = QLineEdit("0.0")
         self.f_x_max = QLineEdit("40.0")
         self.f_y_min = QLineEdit("0.0")
         self.f_y_max = QLineEdit("40.0")
-
         self.f_unit_src = QComboBox()
         self.f_unit_src.addItems(["MPa", "kPa"])
-
         self.f_unit_dst = QComboBox()
         self.f_unit_dst.addItems(["MPa", "kPa"])
 
-        form_layout.addRow("Parametro:", self.f_param)
-        form_layout.addRow("Colore:", self.f_color)
-        form_layout.addRow("X Min:", self.f_x_min)
-        form_layout.addRow("X Max:", self.f_x_max)
+        form_layout.addRow("Parametro/Nome:", self.f_param)
+        form_layout.addRow("Filtro Colore:", self.f_color)
+        form_layout.addRow("", self.lbl_rgb)
+        form_layout.addRow("X Min (Sorgente):", self.f_x_min)
+        form_layout.addRow("X Max (Sorgente):", self.f_x_max)
         form_layout.addRow("Y Inizio (m):", self.f_y_min)
         form_layout.addRow("Y Fine (m):", self.f_y_max)
         form_layout.addRow("Unità Sorgente:", self.f_unit_src)
-        form_layout.addRow("Unità Destinazione:", self.f_unit_dst)
+        form_layout.addRow("Unità Output:", self.f_unit_dst)
 
         self.btn_save_box = QPushButton("Salva Proprietà Box")
         form_layout.addRow(self.btn_save_box)
@@ -339,30 +375,51 @@ class TemplateEditorView(QWidget):
         self.btn_save_template = QPushButton("💾 Salva Template JSON")
         self.btn_save_template.setStyleSheet("background-color: #2ecc71; color: white; font-weight: bold; padding: 10px;")
 
-        right_layout.addWidget(QLabel("Elementi Disegnati:"))
+        right_layout.addWidget(QLabel("Elementi Disegnati (Doppio clic per rinominare):"))
         right_layout.addWidget(self.list_widget)
         right_layout.addWidget(self.config_group)
         right_layout.addStretch()
         right_layout.addWidget(self.btn_save_template)
 
-        main_layout.addLayout(left_layout)
+        main_layout.addWidget(left_panel)
+        main_layout.addWidget(self.viewer)
         main_layout.addWidget(right_panel)
 
-        # Connessioni
+        # Connections
         self.btn_load.clicked.connect(self.load_pdf)
-        self.btn_add_box.clicked.connect(lambda: self.set_drawing_mode('box'))
-        self.btn_add_marker.clicked.connect(lambda: self.set_drawing_mode('marker'))
+        self.btn_rotate.clicked.connect(self.rotate_pdf)
+        self.btn_grid.toggled.connect(self.viewer.toggle_grid)
+
+        self.btn_select.clicked.connect(lambda: self.switch_tool(self.btn_select, 'select'))
+        self.btn_pan.clicked.connect(lambda: self.switch_tool(self.btn_pan, 'pan'))
+        self.btn_box.clicked.connect(lambda: self.switch_tool(self.btn_box, 'box'))
+        self.btn_marker.clicked.connect(lambda: self.switch_tool(self.btn_marker, 'marker'))
+        self.btn_eyedrop.clicked.connect(lambda: self.switch_tool(self.btn_eyedrop, 'eyedropper'))
+
         self.viewer.boxAdded.connect(self.on_box_added)
         self.viewer.boxSelected.connect(self.on_box_selected)
+        self.viewer.colorPicked.connect(self.on_color_picked)
+
         self.list_widget.currentItemChanged.connect(self.on_list_item_selected)
+        self.list_widget.itemChanged.connect(self.on_list_item_changed)
         self.btn_save_box.clicked.connect(self.save_current_box_props)
         self.btn_save_template.clicked.connect(self.save_template)
+
+        self.switch_tool(self.btn_select, 'select')
+
+        # Store original text for renaming detection
+        self._editing_item_text = None
+        self.list_widget.itemDoubleClicked.connect(self.on_item_double_clicked)
+
+    def on_item_double_clicked(self, item):
+        self._editing_item_text = item.text()
 
     def apply_dark_theme(self):
         dark_stylesheet = """
         QWidget { background-color: #2b2b2b; color: #e0e0e0; font-family: Arial; }
         QPushButton { background-color: #3c3f41; border: 1px solid #555; border-radius: 4px; padding: 6px; }
         QPushButton:hover { background-color: #4b4d4f; }
+        QPushButton:checked { background-color: #007acc; border-color: #005a9e; }
         QLineEdit, QComboBox { background-color: #3c3f41; border: 1px solid #555; padding: 4px; border-radius: 2px; }
         QGraphicsView { border: none; background-color: #1e1e1e; }
         QListWidget { background-color: #3c3f41; border: 1px solid #555; }
@@ -372,6 +429,11 @@ class TemplateEditorView(QWidget):
         """
         self.setStyleSheet(dark_stylesheet)
 
+    def switch_tool(self, btn, mode):
+        for t in self.tools: t.setChecked(False)
+        btn.setChecked(True)
+        self.viewer.set_mode(mode)
+
     def load_pdf(self):
         path, _ = QFileDialog.getOpenFileName(self, "Seleziona PDF", "", "PDF Files (*.pdf)")
         if path:
@@ -379,36 +441,65 @@ class TemplateEditorView(QWidget):
             self.box_data.clear()
             self.viewer.load_pdf(path)
 
-    def set_drawing_mode(self, mode):
-        if not self.viewer.current_pdf_path:
-            QMessageBox.warning(self, "Attenzione", "Carica prima un PDF.")
-            return
-        self.viewer.drawing_mode = mode
-        self.viewer.setDragMode(QGraphicsView.DragMode.NoDrag)
-        self.viewer.setCursor(Qt.CursorShape.CrossCursor)
+    def rotate_pdf(self):
+        if self.viewer.current_pdf_path:
+            # We wipe drawing on rotate since coordinates change
+            if len(self.viewer.boxes) > 0 or self.viewer.marker_item:
+                res = QMessageBox.question(self, "Ruota", "Ruotare resetterà i box disegnati. Continuare?")
+                if res != QMessageBox.StandardButton.Yes: return
+
+            new_rot = (self.viewer.base_rotation + 90) % 360
+            self.viewer.load_pdf(self.viewer.current_pdf_path, rotation=new_rot)
+
+    def on_color_picked(self, rgb):
+        self.custom_rgb = rgb
+        self.f_color.setCurrentText("Custom")
+        self.lbl_rgb.setText(f"RGB: {rgb[0]}, {rgb[1]}, {rgb[2]}")
+        self.lbl_rgb.setStyleSheet(f"color: rgb({rgb[0]}, {rgb[1]}, {rgb[2]}); font-weight: bold;")
 
     def on_box_added(self, box_id, is_marker):
         if is_marker:
-            # Rimuovi vecchio marker dalla lista se esiste
             for i in range(self.list_widget.count()):
                 if self.list_widget.item(i).text() == "marker":
                     self.list_widget.takeItem(i)
                     break
-
         item = QListWidgetItem(box_id)
-        self.list_widget.addItem(item)
+        # Allow editing name
         if not is_marker:
-            # Inizializza dati default
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+        self.list_widget.addItem(item)
+
+        if not is_marker:
             self.box_data[box_id] = {
-                "param": "qc", "color_filter": "Blu", "source_unit": "MPa",
-                "target_unit": "MPa", "x_range": [0.0, 40.0], "y_range": [0.0, 40.0]
+                "param": "qc", "color_filter": "Blu", "custom_rgb": None,
+                "source_unit": "MPa", "target_unit": "MPa",
+                "x_range": [0.0, 40.0], "y_range": [0.0, 40.0]
             }
 
     def on_box_selected(self, box_id):
-        # Sincronizza lista
         items = self.list_widget.findItems(box_id, Qt.MatchFlag.MatchExactly)
-        if items:
-            self.list_widget.setCurrentItem(items[0])
+        if items: self.list_widget.setCurrentItem(items[0])
+
+    def on_list_item_changed(self, item):
+        if not self._editing_item_text: return
+        old_id = self._editing_item_text
+        new_id = item.text().strip()
+
+        if new_id and old_id != new_id and new_id != "marker":
+            if new_id in self.box_data:
+                QMessageBox.warning(self, "Errore", "Un box con questo nome esiste già.")
+                item.setText(old_id)
+            else:
+                # Update dictionaries
+                self.box_data[new_id] = self.box_data.pop(old_id)
+                if old_id in self.viewer.boxes:
+                    box_item = self.viewer.boxes.pop(old_id)
+                    box_item.box_id = new_id
+                    self.viewer.boxes[new_id] = box_item
+        elif not new_id:
+            item.setText(old_id)
+
+        self._editing_item_text = None
 
     def on_list_item_selected(self, current, previous):
         if not current:
@@ -417,15 +508,25 @@ class TemplateEditorView(QWidget):
 
         box_id = current.text()
         if box_id == "marker":
-            self.config_group.setEnabled(False) # Marker non ha config parametri
-            # Evidenzia marker
+            self.config_group.setEnabled(False)
             self.viewer.scene.clearSelection()
             if self.viewer.marker_item: self.viewer.marker_item.setSelected(True)
         else:
             self.config_group.setEnabled(True)
             data = self.box_data.get(box_id, {})
-            self.f_param.setCurrentText(data.get("param", "qc"))
+            self.f_param.setText(data.get("param", "qc"))
             self.f_color.setCurrentText(data.get("color_filter", "Blu"))
+
+            if data.get("custom_rgb"):
+                rgb = data["custom_rgb"]
+                self.custom_rgb = rgb
+                self.lbl_rgb.setText(f"RGB: {rgb[0]}, {rgb[1]}, {rgb[2]}")
+                self.lbl_rgb.setStyleSheet(f"color: rgb({rgb[0]}, {rgb[1]}, {rgb[2]}); font-weight: bold;")
+            else:
+                self.custom_rgb = None
+                self.lbl_rgb.setText("RGB: N/A")
+                self.lbl_rgb.setStyleSheet("")
+
             self.f_x_min.setText(str(data.get("x_range", [0,0])[0]))
             self.f_x_max.setText(str(data.get("x_range", [0,0])[1]))
             self.f_y_min.setText(str(data.get("y_range", [0,0])[0]))
@@ -433,7 +534,6 @@ class TemplateEditorView(QWidget):
             self.f_unit_src.setCurrentText(data.get("source_unit", "MPa"))
             self.f_unit_dst.setCurrentText(data.get("target_unit", "MPa"))
 
-            # Evidenzia box
             self.viewer.scene.clearSelection()
             box = self.viewer.boxes.get(box_id)
             if box: box.setSelected(True)
@@ -446,8 +546,9 @@ class TemplateEditorView(QWidget):
 
         try:
             self.box_data[box_id] = {
-                "param": self.f_param.currentText(),
+                "param": self.f_param.text(),
                 "color_filter": self.f_color.currentText(),
+                "custom_rgb": self.custom_rgb if self.f_color.currentText() == "Custom" else None,
                 "x_range": [float(self.f_x_min.text()), float(self.f_x_max.text())],
                 "y_range": [float(self.f_y_min.text()), float(self.f_y_max.text())],
                 "source_unit": self.f_unit_src.currentText(),
@@ -458,7 +559,6 @@ class TemplateEditorView(QWidget):
             QMessageBox.warning(self, "Errore Formato", "Assicurati che i valori Min e Max siano numerici.")
 
     def _get_normalized_rect(self, item: QGraphicsRectItem) -> list:
-        # Cruciale: calcoliamo le coordinate relative alla scena (che corrisponde all'immagine base)
         rect = item.sceneBoundingRect()
         scene_rect = self.viewer.scene.sceneRect()
 
@@ -467,19 +567,14 @@ class TemplateEditorView(QWidget):
         x1 = rect.right() / scene_rect.width()
         y1 = rect.bottom() / scene_rect.height()
 
-        # Clamp tra 0 e 1
         return [max(0.0, min(1.0, c)) for c in [x0, y0, x1, y1]]
 
     def extract_marker_roi_300dpi(self, rect_norm: list) -> np.ndarray:
-        """Estrae l'immagine del marker direttamente dal PDF a 300 DPI per il cv_aligner."""
-        if not self.viewer.current_pdf_path:
-            return None
-
+        if not self.viewer.current_pdf_path: return None
         doc = fitz.open(self.viewer.current_pdf_path)
         page = doc[0]
-        mat = fitz.Matrix(300 / 72.0, 300 / 72.0)
+        mat = fitz.Matrix(300 / 72.0, 300 / 72.0).prerotate(self.viewer.base_rotation)
         pix = page.get_pixmap(matrix=mat, colorspace=fitz.csRGB, alpha=False)
-
         img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
 
         x0 = int(rect_norm[0] * pix.width)
@@ -489,7 +584,6 @@ class TemplateEditorView(QWidget):
 
         roi_rgb = img_array[y0:y1, x0:x1]
         roi_bgr = cv2.cvtColor(roi_rgb, cv2.COLOR_RGB2BGR)
-
         del pix
         doc.close()
         return roi_bgr
@@ -500,10 +594,14 @@ class TemplateEditorView(QWidget):
             return
 
         boxes_data = []
-        for box_id, box_item in self.viewer.boxes.items():
-            if box_id not in self.box_data:
-                QMessageBox.warning(self, "Errore", f"Proprietà per {box_id} non salvate!")
-                return
+        for i in range(self.list_widget.count()):
+            box_id = self.list_widget.item(i).text()
+            if box_id == "marker": continue
+            if box_id not in self.box_data: continue # Should not happen if well synced
+
+            box_item = self.viewer.boxes.get(box_id)
+            if not box_item: continue
+
             b_data = self.box_data[box_id].copy()
             b_data["rect_norm"] = self._get_normalized_rect(box_item)
             boxes_data.append(b_data)
@@ -524,7 +622,8 @@ class TemplateEditorView(QWidget):
                 boxes_data=boxes_data,
                 template_name=os.path.basename(path),
                 marker_image=marker_img,
-                marker_rect_norm=marker_rect_norm
+                marker_rect_norm=marker_rect_norm,
+                base_rotation=self.viewer.base_rotation
             )
             QMessageBox.information(self, "Successo", "Template salvato e validato correttamente!")
         except Exception as e:
